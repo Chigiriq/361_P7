@@ -9,9 +9,6 @@ ARITH_BINARY = {
     "sub": "@SP,A=A-1,M=M-D",
     "and": "@SP,A=A-1,M=M&D",
     "or":  "@SP,A=A-1,M=M|D",
-    "gt":  "A=A-1,D=M-D,@isGT,D;JGT,@SP,M=M-1,A=M,M=0,@endGT,0;JMP,(isGT)@SP,M=M-1,A=M,M=-1,(endGT)",
-    "eq":  "A=A-1,D=M-D,@isEQ,D;JEQ,@SP,M=M-1,A=M,M=0,@endEQ,0;JMP,(isLT)@SP,M=M-1,A=M,M=-1,(endEQ)",
-    "lt":  "A=A-1,D=M-D,@isLT,D;JLT,@SP,M=M-1,A=M,M=0,@endLT,0;JMP,(isLT)@SP,M=M-1,A=M,M=-1,(endLT)",
 }
 
 # As above, but now the keys are unary operations neg, not
@@ -26,15 +23,15 @@ ARITH_UNARY = {
 # These are assumed to be preceded by getPopD()
 # The ML code corresponds very nicely to the jump conditions in 
 # Hack assembly
-ARITH_TEST  = {
-    "gt":  "A=A-1,D=M-D,@isGT,D;JGT,@SP,M=M-1,A=M,M=0,@endGT,0;JMP,(isGT)@SP,M=M-1,A=M,M=-1,(endGT)",
-    "eq":  "A=A-1,D=M-D,@isEQ,D;JEQ,@SP,M=M-1,A=M,M=0,@endEQ,0;JMP,(isLT)@SP,M=M-1,A=M,M=-1,(endEQ)",
-    "lt":  "A=A-1,D=M-D,@isLT,D;JLT,@SP,M=M-1,A=M,M=0,@endLT,0;JMP,(isLT)@SP,M=M-1,A=M,M=-1,(endLT)",
+ARITH_TEST = {
+    "gt": "A=A-1,D=M-D,@isGT,D;JGT,@SP,M=M-1,A=M,M=0,@endGT,0;JMP,(isGT)@SP,M=M-1,A=M,M=-1,(endGT)",
+    "eq": "A=A-1,D=M-D,@isEQ,D;JEQ,@SP,M=M-1,A=M,M=0,@endEQ,0;JMP,(isEQ)@SP,M=M-1,A=M,M=-1,(endEQ)",
+    "lt": "A=A-1,D=M-D,@isLT,D;JLT,@SP,M=M-1,A=M,M=0,@endLT,0;JMP,(isLT)@SP,M=M-1,A=M,M=-1,(endLT)",
 }
 
 # Boring, but needed - translate the long VM names argument, local, this, that
 # to the shorthand forms of these found in symbol table used for Hack assembly
-SEGLABEL = {"local": "@LCL,", "argument": "@ARG,", "this": "@THIS,", "that": "@THAT,",}
+SEGLABEL = {"local": "@LCL,", "argument": "@ARG,", "this": "@THIS,", "that": "@THAT,"}
 
 # Here are the segments
 SEGMENTS = {
@@ -42,35 +39,19 @@ SEGMENTS = {
     "static": "@%s",
     "pointer": "@3",
     "temp": "@5",
-
 }
-            
 
 # This will be used to generate unique labels when they are needed.
 LABEL_NUMBER = 0
 
 # The following dictionaries are used to translate VM language commands to machine language.
 def getPushD():
-    # This method takes no arguments and returns a string with assembly language
-    # that will push the contents of the D register to the stack.
-    #@SP 
-    #A=M    start at stack pointer address
-    #M=D    save D into M
-    #@SP    go back to pointer
-    #M=M+1  index pointer to be next addr
     return "@SP,A=M,M=D,@SP,M=M+1,"
 
 def getPopD():
-    # This method takes no arguments and returns a string with assembly language
-    # that will pop the stack to the D register.
-    # SIDE EFFECT: The A register contains the SP.
-    #@SP 
-    #M=M-1 index SP down 1
-    #A=M   go to new SP address
-    #D=M   save val in there to D
     return "@SP,M=M-1,A=M,D=M,"
 
-def pointerSeg(pushpop,seg,index):
+def pointerSeg(pushpop, seg, index):
     """ This function returns Hack ML code to push a memory location to 
     to the stack, or pop the stack to a memory location. 
 
@@ -91,47 +72,38 @@ def pointerSeg(pushpop,seg,index):
     NOTE: This function will only be called if the seg is one of:
     "local", "argument", "this", "that"
     """
-
-    
-    ans = "@" + str(index) + ",D=A,"
+    ans = "@" + str(index) + ",D=A,"  # Load index into D
 
     if seg in SEGLABEL:
         #those are pointers, meaning the RAM address associated with them in the symbol table contains
         # a RAM address where the SEGMENT begins. INDEX specifies where to go in the SEGMENT.
+
         if pushpop == 'push':
-            ans = ans + SEGLABEL.get(seg) + "A=M,A=A+D,D=M," + getPushD()
-            return ans
-
+            ans += SEGLABEL[seg] + "A=M+D,D=M," + getPushD()
         elif pushpop == 'pop':
-            ans = ans + SEGLABEL.get(seg) + "A=D+M,D=M,@R13,M=D," + getPopD() + "@R13,A=M,M=D,"
-            return ans
+            ans += SEGLABEL[seg] + "A=M+D,@R13,M=D," + getPopD() + "@R13,A=M,M=D,"
+        return ans
+    else:
+        raise ValueError(f"Invalid segment: {seg}")
 
-##XXX WHYHYHYYHY
-def fixedSeg(push,seg,index):
+def fixedSeg(pushpop, seg, index):
     """
     For pointer and temp segments
     """
     #Here, the values in the memory address specified by the segment are 
     # defined, 3 and 5 respectively and not indirectly specified pointers.
-    
+
     if seg == 'pointer':
-        addr = '@3'
-
+        addr = '@' + str(3 + index)  # Pointer starts at RAM[3]
     elif seg == 'temp':
-        addr = '@5'
+        addr = '@' + str(5 + index)  # Temp starts at RAM[5]
 
-    ans = addr + str(index) + ",D=A,"
+    if pushpop == 'push':
+        return addr + ",D=M," + getPushD()
+    elif pushpop == 'pop':
+        return getPopD() + addr + ",M=D,"
 
-    if push == 'push':
-        ans = ans + getPushD()
-
-    elif push == "pop":
-        ans = ans + "D=A,@R13,M=D" + getPopD()
-    
-    return ans
-
-
-def constantSeg(push,seg,index):
+def constantSeg(pushpop, seg, index):
     """
     This will do constant and static segments
     """
@@ -142,51 +114,47 @@ def constantSeg(push,seg,index):
     # manipulation of the value in INDEX onto or off of the stack.
 
     if seg == 'constant':
-        ans = "@" + str(index) + ",D=A,"
+        if pushpop == 'push':
+            return "@" + str(index) + ",D=A," + getPushD()
+        else:
+            raise ValueError("Cannot pop to constant segment.")
 
-        if push == 'push':
-            ans = ans + getPushD()
-        
-        elif push == 'pop':
-            ans = ans + getPopD()
-
-        return ans
-    
     elif seg == 'static':
-        ans = "@STATIC." + str(index) + ",D=A,"
-
-        if push == 'push':
-            ans = ans + getPushD()
-        
-        elif push == 'pop':
-            ans = ans + "@R13,M=D," + getPopD()
-
-        return ans
+        static_var = f"@STATIC.{index}"
+        if pushpop == 'push':
+            return static_var + ",D=M," + getPushD()
+        elif pushpop == 'pop':
+            return getPopD() + static_var + ",M=D,"
 
 def line2Command(line):
     """ This just returns a cleaned up line, removing unneeded spaces and comments"""
     line = line.strip()
     if not line or line.startswith('//'):
         return None
-    
-    line = line.split('//')[0].strip()
-    return line     
+    command = line.split('//')[0].strip()
+
+    #adding this because nonetype return error for comments
+    if not command:
+        return None
+    return command
 
 def uniqueLabel():
     """ Uses LABEL_NUMBER to generate and return a unique label"""
     #when you need to jump to 0 or -1 becuase of arithtest
-    ans = "@temp" + str(LABEL_NUMBER)
+    ans = "temp" + str(LABEL_NUMBER)
     LABEL_NUMBER += 1
-
     return ans
-
 
 def ParseFile(f):
     outString = ""
     for line in f:
         command = line2Command(line)
-        if command:
-            args = [x.strip() for x in command.split()] # Break command into list of arguments, no return characters
+        if command:  # Only process non-None commands
+            args = [x.strip() for x in command.split()]
+            
+            #Debugging Line
+            print(f"Processing command: {args}")
+
             if args[0] in ARITH_BINARY.keys():
                 """
                 Code that will deal with any of the binary operations (add, sub, and, or)
@@ -194,13 +162,13 @@ def ParseFile(f):
                 to each by pulling a key from the appropriate dictionary.
                 Remember, it's always about putting together strings of Hack ML code.
                 """
-                outString = outString + ARITH_BINARY[args[0]] + ","
-
+                outString += ARITH_BINARY[args[0]] + ","
+                
             elif args[0] in ARITH_UNARY.keys():
                 """
                 As above, but now for the unary operators (neg, not)
                 """
-                outString = outString + ARITH_UNARY[args[0]] + ","
+                outString += ARITH_UNARY[args[0]] + ","
 
             elif args[0] in ARITH_TEST.keys():
                 """
@@ -212,42 +180,65 @@ def ParseFile(f):
                 That goes back onto the stack.
                 HINT: Review the quiz for this unit!
                 """
-                #if something is less than something else what do you do?....probably cry
-                #   remove both and put a true (-1): 0xFFFF on the stack
-                #       review the quiz cuz its on there
                 TRUElabel = uniqueLabel()
                 FALSElabel = uniqueLabel()
+                outString += ARITH_TEST[args[0]].replace("isGT", TRUElabel).replace("endGT", FALSElabel) + ","
+                
+            elif args[1] in ["pointer", "temp"]:
+                """
+                Redundant but it fixes the issue of the pointer and temp segments being handled in the same way.
+                """
+                segment = args[1]
+                index = int(args[2])
+                if args[0] == "push":
+                    outString += fixedSeg("push", segment, index) + ","
+                elif args[0] == "pop":
+                    outString += fixedSeg("pop", segment, index) + ","
 
-                #XXX bro what
-                outString = outString + ARITH_TEST[args[0]].replace("isGT", TRUElabel).replace("endGT", FALSElabel) + ","
-
+            elif args[1] in SEGLABEL.keys():
+                """
+                There's definitely a better way to do this, but it works for now. Fixes this, that ordering
+                """
+                segment = args[1]
+                index = int(args[2])
+                if args[0] == "push":
+                    outString += pointerSeg("push", segment, index) + ","
+                elif args[0] == "pop":
+                    outString += pointerSeg("pop", segment, index) + ","
 
             elif args[1] in SEGMENTS.keys():
                 """
-                Here we deal with code that's like push/pop segment index.
-                You've written the functions, the code in here selects the right 
-                function by picking a function handle from a dictionary. 
+                This is normal
                 """
-
+                segment = args[1]
+                index = int(args[2])
                 if args[0] == "push":
-                    outString = outString + SEGMENTS[args[1]]["push"](args[2]) + ","
-
+                    outString += constantSeg("push", segment, index) + ","
                 elif args[0] == "pop":
-                    outString = outString + SEGMENTS[args[1]]["pop"](args[2]) + ","
+                    outString += constantSeg("pop", segment, index) + ","
 
             else:
-                print("Unknown command!")
+                print("Unknown segment!")
                 print(args)
                 sys.exit(-1)
+        else:
+            #debugging nonetype return error for comments
+            print(f"Skipping line: {line.strip()}")
 
     l = uniqueLabel()
-    outString += '(%s)'%(l)+',@%s,0;JMP'%l # Final endless loop
-    return outString.replace(" ","").replace(',','\n')
+    outString += '(%s)' % (l) + ',@%s,0;JMP' % l
+    return outString.replace(" ", "").replace(',', '\n')
 
+# f = open("test.vm")
 
-filename = sys.argv[1].strip()
+#memory
+# f = open("MemoryAccess\\BasicTest\\BasicTest.vm") #works
+# f = open("MemoryAccess\\PointerTest\\PointerTest.vm") #works
+# f = open("MemoryAccess\\StaticTest\\StaticTest.vm") #works
 
-# This is ugly - add some error checking on file open.
-f = open(filename)
+#arithmetic
+# f = open("StackArithmetic\\SimpleAdd\\SimpleAdd.vm") #works
+f = open("StackArithmetic\\StackTest\\StackTest.vm") #works
+
 print(ParseFile(f))
 f.close()
